@@ -53,9 +53,10 @@ public:
       last_update = now;
     }
 
-    if (elapsed_time >= target_time) {
+    if (running && elapsed_time >= target_time) {
       // We're done with the current block.
       running = false;
+      beep();
       if (state == WORKING) {
         state = WORK_DONE;
       } else if (state == PAUSE) {
