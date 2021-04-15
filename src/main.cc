@@ -1,7 +1,9 @@
 #include <chrono>
 #include <cmath>
 #include <locale.h>
+#include <string>
 #include <thread>
+#include <vector>
 
 #include "ncurses.h"
 
@@ -20,10 +22,10 @@ void init_colors() {
   init_pair(Color::PAUSE_OVER_BAR, COLOR_WHITE, COLOR_RED);
 }
 
+// TODO: Need a way to figure out how long the next pause should be.
 class Pomodoro {
 public:
   void Start(float seconds) {
-
     switch (state) {
     case WORKING:
     case PAUSE:
@@ -127,6 +129,40 @@ private:
   TimePoint last_update;
 };
 
+class Todo {
+public:
+  Todo() : win(stdscr) {
+    items.push_back({.text = "foo"});
+    items.push_back({.text = "bar"});
+  }
+
+  void Draw() const {
+    constexpr int kLineLength = 16;
+    char line[kLineLength];
+
+    for (int i = 0; i < items.size(); ++i) {
+      const Item &item = items[i];
+      char status_char = ' ';
+      snprintf(line, kLineLength, " [%c] %s", status_char, item.text.c_str());
+      wmove(win, 2 + i, 0);
+      waddstr(win, line);
+    }
+
+    // Move to the current item.
+    wmove(win, 2, 2);
+  }
+
+private:
+  struct Item {
+    bool done;
+    bool doing;
+    std::string text;
+  };
+
+  WINDOW *win;
+  std::vector<Item> items;
+};
+
 int main() {
   setlocale(LC_ALL, "");
   initscr();
@@ -137,6 +173,7 @@ int main() {
   init_colors();
 
   Pomodoro pomodoro;
+  Todo todo;
   nodelay(stdscr, TRUE);
   for (;;) {
     int ch = getch();
@@ -152,6 +189,7 @@ int main() {
 
     pomodoro.Tick();
     pomodoro.Draw();
+    todo.Draw();
   }
 
   endwin();
