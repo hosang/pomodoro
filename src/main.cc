@@ -25,22 +25,31 @@ void init_colors() {
 // TODO: Need a way to figure out how long the next pause should be.
 class Pomodoro {
 public:
-  void Start(float seconds) {
+  // Start the next work or break unit. If work or break is already running, do
+  // nothing.
+  void Start() {
     switch (state) {
     case WORKING:
     case PAUSE:
-      break;
+      // Timer is already running. Do nothing.
+      return;
     case WORK_DONE:
       state = PAUSE;
       running = true;
-      target_time = seconds;
+      if (pomodoros_done >= 4) {
+        pomodoros_done = 0;
+        // Time for a long break, YAY! 15 minutes.
+        target_time = 15 * 60;
+      } else {
+        target_time = 5 * 60; // 5 minutes.
+      }
       elapsed_time = 0.0;
       last_update = Clock::now();
       break;
     case PAUSE_DONE:
       state = WORKING;
       running = true;
-      target_time = seconds;
+      target_time = 25 * 60; // 25 minutes.
       elapsed_time = 0.0;
       last_update = Clock::now();
       break;
@@ -61,6 +70,7 @@ public:
       beep();
       if (state == WORKING) {
         state = WORK_DONE;
+        pomodoros_done += 1;
       } else if (state == PAUSE) {
         state = PAUSE_DONE;
       }
@@ -106,7 +116,10 @@ public:
     for (int x = 0; x < COLS; ++x) {
       const bool in_bar = x < bar_length;
       const chtype color = in_bar ? bar_color : bg_color;
-      const chtype c = (x < bufferlen) ? buffer[x] : ' ';
+      chtype c = (x < bufferlen) ? buffer[x] : ' ';
+      if (x == COLS - 2) {
+        c = '0' + pomodoros_done;
+      }
       mvwaddch(stdscr, 0, x, c | color | A_BOLD);
     }
   }
@@ -127,39 +140,55 @@ private:
   float target_time = 0.0;
   float elapsed_time = 0.0;
   TimePoint last_update;
+  int pomodoros_done = 0;
 };
 
 class Todo {
 public:
   Todo() : win(stdscr) {
     items.push_back({.text = "foo"});
-    items.push_back({.text = "bar"});
+    items.push_back({.text = "bar", .done = false});
+    items.push_back({.text = "baz", .done = true});
   }
 
-  void Draw() const {
-    constexpr int kLineLength = 16;
-    char line[kLineLength];
+  void Up() { current_item = std::max(current_item - 1, 0); }
 
+  void Down() {
+    current_item = std::min<int>(current_item + 1, items.size() - 1);
+  }
+
+  void Toggle() { items[current_item].done = !items[current_item].done; }
+
+  void Draw() const {
     for (int i = 0; i < items.size(); ++i) {
       const Item &item = items[i];
-      char status_char = ' ';
-      snprintf(line, kLineLength, " [%c] %s", status_char, item.text.c_str());
-      wmove(win, 2 + i, 0);
-      waddstr(win, line);
+      const char status_char = item.done ? 'x' : ' ';
+
+      attr_t attrs = 0;
+      if (i == current_item) {
+        attrs |= WA_BOLD;
+      }
+      if (item.done) {
+        attrs |= WA_DIM;
+      }
+
+      wattron(win, attrs);
+      mvwprintw(win, i + 2, 1, "[%c] %s", status_char, item.text.c_str());
+      wattroff(win, attrs);
     }
 
     // Move to the current item.
-    wmove(win, 2, 2);
+    wmove(win, 2 + current_item, 2);
   }
 
 private:
   struct Item {
     bool done;
-    bool doing;
     std::string text;
   };
 
   WINDOW *win;
+  int current_item = 0;
   std::vector<Item> items;
 };
 
@@ -184,9 +213,16 @@ int main() {
       // Quit.
       break;
     } else if (ch == 's') {
-      pomodoro.Start(10);
+      pomodoro.Start();
+    } else if (ch == 'j') {
+      todo.Down();
+    } else if (ch == 'k') {
+      todo.Up();
+    } else if (ch == ' ') {
+      todo.Toggle();
     }
 
+    refresh();
     pomodoro.Tick();
     pomodoro.Draw();
     todo.Draw();
