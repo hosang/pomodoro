@@ -155,6 +155,7 @@ public:
 
   void Down() {
     current_item = std::min<int>(current_item + 1, items.size() - 1);
+    current_item = std::max(current_item, 0);
   }
 
   void Toggle() { items[current_item].done = !items[current_item].done; }
@@ -179,6 +180,30 @@ public:
 
     // Move to the current item.
     wmove(win, 2 + current_item, 2);
+  }
+
+  void New() {
+    items.insert(items.begin(), {.text = ""});
+    current_item = 0;
+    werase(win);
+    Draw();
+    wrefresh(win);
+
+    constexpr int kBufferLength = 32;
+    char buffer[kBufferLength];
+    nodelay(win, false);
+    echo();
+    mvwgetnstr(win, /*y=*/2 + current_item, /*x=*/5, buffer, kBufferLength);
+    nodelay(win, true);
+    noecho();
+    items[current_item].text = buffer;
+  }
+
+  void Delete() {
+    if (items.empty()) {
+      return;
+    }
+    items.erase(items.begin() + current_item);
   }
 
 private:
@@ -218,14 +243,19 @@ int main() {
       todo.Down();
     } else if (ch == 'k') {
       todo.Up();
+    } else if (ch == 'n') {
+      todo.New();
+    } else if (ch == 'D') {
+      todo.Delete();
     } else if (ch == ' ') {
       todo.Toggle();
     }
 
-    refresh();
+    erase();
     pomodoro.Tick();
     pomodoro.Draw();
     todo.Draw();
+    refresh();
   }
 
   endwin();
