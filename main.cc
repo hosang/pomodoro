@@ -17,14 +17,16 @@ enum Color {
 void init_colors() {
   start_color();
   init_pair(Color::DEFAULT, COLOR_WHITE, COLOR_BLACK);
-  init_pair(Color::BAR, COLOR_WHITE, COLOR_GREEN);
-  init_pair(Color::PAUSE_BAR, COLOR_WHITE, COLOR_BLUE);
-  init_pair(Color::PAUSE_OVER_BAR, COLOR_WHITE, COLOR_RED);
+  init_pair(Color::BAR, COLOR_BLACK, COLOR_GREEN);
+  init_pair(Color::PAUSE_BAR, COLOR_BLACK, COLOR_BLUE);
+  init_pair(Color::PAUSE_OVER_BAR, COLOR_BLACK, COLOR_RED);
 }
 
 // TODO: Need a way to figure out how long the next pause should be.
 class Pomodoro {
 public:
+  Pomodoro(WINDOW *window) : win(window) {}
+
   // Start the next work or break unit. If work or break is already running, do
   // nothing.
   void Start() {
@@ -88,40 +90,34 @@ public:
     const int remaining = std::lround(target_time - elapsed_time);
     constexpr int kBufSize = 16;
     char buffer[kBufSize];
-    const chtype bg_color = COLOR_PAIR(Color::DEFAULT);
-    chtype bar_color;
+    short bar_color;
     switch (state) {
     case WORKING:
-      snprintf(buffer, kBufSize, " work %2d:%02d", remaining / 60,
+      snprintf(buffer, kBufSize, "work %2d:%02d", remaining / 60,
                remaining % 60);
-      bar_color = COLOR_PAIR(Color::BAR);
+      bar_color = Color::BAR;
       break;
     case WORK_DONE:
-      snprintf(buffer, kBufSize, " work DONE");
-      bar_color = COLOR_PAIR(Color::PAUSE_BAR);
+      snprintf(buffer, kBufSize, "work DONE");
+      bar_color = Color::PAUSE_BAR;
       break;
     case PAUSE:
-      snprintf(buffer, kBufSize, " pause %2d:%02d", remaining / 60,
+      snprintf(buffer, kBufSize, "pause %2d:%02d", remaining / 60,
                remaining % 60);
-      bar_color = COLOR_PAIR(Color::PAUSE_BAR);
+      bar_color = Color::PAUSE_BAR;
       break;
     case PAUSE_DONE:
-      snprintf(buffer, kBufSize, " pause OVER");
-      bar_color = COLOR_PAIR(Color::PAUSE_OVER_BAR);
+      snprintf(buffer, kBufSize, "pause OVER");
+      bar_color = Color::PAUSE_OVER_BAR;
       break;
     }
 
-    const int bufferlen = strlen(buffer);
-
-    for (int x = 0; x < COLS; ++x) {
-      const bool in_bar = x < bar_length;
-      const chtype color = in_bar ? bar_color : bg_color;
-      chtype c = (x < bufferlen) ? buffer[x] : ' ';
-      if (x == COLS - 2) {
-        c = '0' + pomodoros_done;
-      }
-      mvwaddch(stdscr, 0, x, c | color | A_BOLD);
-    }
+    int rows, cols;
+    getmaxyx(win, rows, cols);
+    const attr_t attr = 0;
+    mvwinsnstr(win, 0, 1, buffer, kBufSize);
+    mvwprintw(win, 0, cols - 2, "%1d", pomodoros_done);
+    mvwchgat(win, 0, 0, bar_length, attr, bar_color, nullptr);
   }
 
 private:
@@ -135,6 +131,7 @@ private:
     PAUSE_DONE,
   };
 
+  WINDOW *win;
   State state = PAUSE_DONE;
   bool running = false;
   float target_time = 0.0;
@@ -145,7 +142,7 @@ private:
 
 class Todo {
 public:
-  Todo() : win(stdscr) {
+  Todo(WINDOW *window) : win(window) {
     items.push_back({.text = "foo"});
     items.push_back({.text = "bar", .done = false});
     items.push_back({.text = "baz", .done = true});
@@ -174,12 +171,12 @@ public:
       }
 
       wattron(win, attrs);
-      mvwprintw(win, i + 2, 1, "[%c] %s", status_char, item.text.c_str());
+      mvwprintw(win, i, 0, "[%c] %s", status_char, item.text.c_str());
       wattroff(win, attrs);
     }
 
     // Move to the current item.
-    wmove(win, 2 + current_item, 2);
+    wmove(win, current_item, 1);
   }
 
   void New() {
@@ -193,7 +190,7 @@ public:
     char buffer[kBufferLength];
     nodelay(win, false);
     echo();
-    mvwgetnstr(win, /*y=*/2 + current_item, /*x=*/5, buffer, kBufferLength);
+    mvwgetnstr(win, /*y=*/current_item, /*x=*/4, buffer, kBufferLength);
     nodelay(win, true);
     noecho();
     items[current_item].text = buffer;
@@ -226,8 +223,13 @@ int main() {
 
   init_colors();
 
-  Pomodoro pomodoro;
-  Todo todo;
+  WINDOW *pomodoro_window =
+      newwin(/*nlines=*/1, /*ncols=*/0, /*begin_y=*/0, /*begin_x=*/0);
+  WINDOW *todo_window =
+      newwin(/*nlines=*/0, /*ncols=*/0, /*begin_y=*/2, /*begin_x=*/1);
+
+  Pomodoro pomodoro(pomodoro_window);
+  Todo todo(todo_window);
   nodelay(stdscr, TRUE);
   for (;;) {
     int ch = getch();
@@ -251,12 +253,18 @@ int main() {
       todo.Toggle();
     }
 
-    erase();
     pomodoro.Tick();
+
+    werase(pomodoro_window);
+    werase(todo_window);
     pomodoro.Draw();
     todo.Draw();
-    refresh();
+    // refresh();
+    wrefresh(pomodoro_window);
+    wrefresh(todo_window);
   }
 
+  delwin(pomodoro_window);
+  delwin(todo_window);
   endwin();
 }
