@@ -22,7 +22,6 @@ void init_colors() {
   init_pair(Color::PAUSE_OVER_BAR, COLOR_BLACK, COLOR_RED);
 }
 
-// TODO: Need a way to figure out how long the next pause should be.
 class Pomodoro {
 public:
   Pomodoro(WINDOW *window) : win(window) {}
