@@ -1,11 +1,15 @@
 #include <chrono>
 #include <cmath>
+#include <fstream>
+#include <iostream>
 #include <locale.h>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "ncurses.h"
+
+constexpr char todo_txt_path[] = "/Users/hosang/todo.txt";
 
 enum Color {
   DEFAULT = 1,
@@ -141,11 +145,15 @@ private:
 
 class Todo {
 public:
-  Todo(WINDOW *window) : win(window) {
-    items.push_back({.text = "foo"});
-    items.push_back({.text = "bar", .done = false});
-    items.push_back({.text = "baz", .done = true});
-  }
+  struct Item {
+    bool done;
+    std::string text;
+  };
+
+  int current_item = 0;
+  std::vector<Item> items;
+
+  Todo() {}
 
   void Up() { current_item = std::max(current_item - 1, 0); }
 
@@ -156,7 +164,7 @@ public:
 
   void Toggle() { items[current_item].done = !items[current_item].done; }
 
-  void Draw() const {
+  void Draw(WINDOW *win) const {
     for (int i = 0; i < items.size(); ++i) {
       const Item &item = items[i];
       const char status_char = item.done ? 'x' : ' ';
@@ -178,11 +186,11 @@ public:
     wmove(win, current_item, 1);
   }
 
-  void New() {
+  void New(WINDOW *win) {
     items.insert(items.begin(), {.text = ""});
     current_item = 0;
     werase(win);
-    Draw();
+    Draw(win);
     wrefresh(win);
 
     constexpr int kBufferLength = 32;
@@ -201,19 +209,58 @@ public:
     }
     items.erase(items.begin() + current_item);
   }
-
-private:
-  struct Item {
-    bool done;
-    std::string text;
-  };
-
-  WINDOW *win;
-  int current_item = 0;
-  std::vector<Item> items;
 };
 
+std::string GetDay() {
+  char buf[sizeof "2021-04-19"];
+  time_t now;
+  time(&now);
+  strftime(buf, sizeof buf, "%F", localtime(&now));
+  return std::string(buf);
+}
+
+std::vector<Todo::Item> LoadTodo(std::string &day) {
+  std::ifstream is(todo_txt_path);
+  if (!is.is_open()) {
+    std::cout << "Could not open '" << todo_txt_path << "'.\n";
+    return {};
+  }
+
+  // TODO: Also store todo items from most recent entry, so items that are not
+  // DONE can be copied to today.
+  std::string line;
+  while (std::getline(is, line)) {
+    if (line.length() == 0) {
+      continue;
+    }
+
+    if (isdigit(line[0])) {
+      // Assuming this is a date.
+    }
+    std::cout << line << std::endl;
+  }
+
+  return {};
+}
+
+void SaveTodo(const std::string &day, const std::vector<Todo::Item> &items) {
+  std::ofstream os(todo_txt_path, std::ios_base::app);
+  if (!os.is_open()) {
+    std::cout << "Could not write to '" << todo_txt_path << "'.\n";
+    return;
+  }
+
+  os << "\n";
+  os << day << "\n";
+  for (const Todo::Item &item : items) {
+    char done_indicator = item.done ? 'x' : ' ';
+    os << " " << done_indicator << " " << item.text << "\n";
+  }
+}
+
 int main() {
+  const std::string day = GetDay();
+
   setlocale(LC_ALL, "");
   initscr();
   cbreak();
@@ -228,7 +275,7 @@ int main() {
       newwin(/*nlines=*/0, /*ncols=*/0, /*begin_y=*/2, /*begin_x=*/1);
 
   Pomodoro pomodoro(pomodoro_window);
-  Todo todo(todo_window);
+  Todo todo;
   nodelay(stdscr, TRUE);
   for (;;) {
     int ch = getch();
@@ -245,7 +292,7 @@ int main() {
     } else if (ch == 'k') {
       todo.Up();
     } else if (ch == 'n') {
-      todo.New();
+      todo.New(todo_window);
     } else if (ch == 'D') {
       todo.Delete();
     } else if (ch == ' ') {
@@ -257,7 +304,7 @@ int main() {
     werase(pomodoro_window);
     werase(todo_window);
     pomodoro.Draw();
-    todo.Draw();
+    todo.Draw(todo_window);
     // refresh();
     wrefresh(pomodoro_window);
     wrefresh(todo_window);
@@ -266,4 +313,6 @@ int main() {
   delwin(pomodoro_window);
   delwin(todo_window);
   endwin();
+
+  SaveTodo(day, todo.items);
 }
