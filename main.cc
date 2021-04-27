@@ -40,7 +40,6 @@ public:
       return;
     case WORK_DONE:
       state = PAUSE;
-      running = true;
       if (pomodoros_done >= 4) {
         pomodoros_done = 0;
         // Time for a long break, YAY! 15 minutes.
@@ -53,7 +52,6 @@ public:
       break;
     case PAUSE_DONE:
       state = WORKING;
-      running = true;
       target_time = 25 * 60; // 25 minutes.
       elapsed_time = 0.0;
       last_update = Clock::now();
@@ -62,16 +60,18 @@ public:
   }
 
   void Tick() {
-    if (running) {
+    // Keep track of elapsing time.
+    if (state == WORKING || state == WORK_DONE || state == PAUSE) {
+      // We keep counting time during work done to keep track of "overtime".
       const TimePoint now = Clock::now();
       std::chrono::duration<float> since_tick = now - last_update;
       elapsed_time += since_tick.count();
       last_update = now;
     }
 
-    if (running && elapsed_time >= target_time) {
+    // In case the timer *just* finished.
+    if ((state == WORKING || state == PAUSE) && elapsed_time >= target_time) {
       // We're done with the current block.
-      running = false;
       beep();
       if (state == WORKING) {
         state = WORK_DONE;
@@ -86,12 +86,12 @@ public:
     int bar_length = elapsed_time / target_time * COLS;
     bar_length = std::min(bar_length, COLS);
     bar_length = std::max(bar_length, 1);
-    if (!running) {
+    if (state == WORK_DONE || state == PAUSE_DONE) {
       bar_length = COLS;
     }
 
     const int remaining = std::lround(target_time - elapsed_time);
-    constexpr int kBufSize = 16;
+    constexpr int kBufSize = 32;
     char buffer[kBufSize];
     short bar_color;
     switch (state) {
@@ -100,10 +100,13 @@ public:
                remaining % 60);
       bar_color = Color::BAR;
       break;
-    case WORK_DONE:
-      snprintf(buffer, kBufSize, "work DONE");
+    case WORK_DONE: {
+      const int overtime = std::lround(elapsed_time - target_time);
+      snprintf(buffer, kBufSize, "work DONE (+%2d:%02d)", overtime / 60,
+               overtime % 60);
       bar_color = Color::PAUSE_BAR;
       break;
+    }
     case PAUSE:
       snprintf(buffer, kBufSize, "pause %2d:%02d", remaining / 60,
                remaining % 60);
@@ -136,7 +139,6 @@ private:
 
   WINDOW *win;
   State state = PAUSE_DONE;
-  bool running = false;
   float target_time = 0.0;
   float elapsed_time = 0.0;
   TimePoint last_update;
@@ -153,7 +155,7 @@ public:
   int current_item = 0;
   std::vector<Item> items;
 
-  Todo() {}
+  Todo() { items.push_back({.text = "Make TODO list"}); }
 
   void Up() { current_item = std::max(current_item - 1, 0); }
 
