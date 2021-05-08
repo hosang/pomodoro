@@ -1,0 +1,3 @@
+syntax = "proto2";
+
+message StateProto { repeated string todo = 1; }

@@ -9,7 +9,10 @@
 
 #include "ncurses.h"
 
+#include "state.pb.h"
+
 constexpr char todo_txt_path[] = "/Users/hosang/todo.txt";
+constexpr char state_path[] = "/Users/hosang/todo.StateProto.bp";
 
 enum Color {
   DEFAULT = 1,
@@ -102,7 +105,7 @@ public:
       break;
     case WORK_DONE: {
       const int overtime = std::lround(elapsed_time - target_time);
-      snprintf(buffer, kBufSize, "work DONE (+%2d:%02d)", overtime / 60,
+      snprintf(buffer, kBufSize, "work DONE (+%d:%02d)", overtime / 60,
                overtime % 60);
       bar_color = Color::PAUSE_BAR;
       break;
@@ -260,7 +263,37 @@ void SaveTodo(const std::string &day, const std::vector<Todo::Item> &items) {
   }
 }
 
+StateProto LoadState() {
+  StateProto state;
+  std::ifstream is(state_path, std::ios::binary);
+  state.ParseFromIstream(&is);
+  return state;
+}
+
+void SaveState(const std::vector<Todo::Item> &items) {
+  StateProto state = LoadState();
+  state.clear_todo();
+  for (const Todo::Item &item : items) {
+    if (item.done) {
+      continue;
+    }
+    state.add_todo(item.text);
+  }
+
+  std::ofstream os(state_path, std::ios::binary);
+  state.SerializeToOstream(&os);
+}
+
+void RestoreTodo(std::vector<Todo::Item> &items) {
+  items.clear();
+  const StateProto state = LoadState();
+  for (const auto &text : state.todo()) {
+    items.push_back({.text = text});
+  }
+}
+
 int main() {
+  GOOGLE_PROTOBUF_VERIFY_VERSION;
   const std::string day = GetDay();
 
   setlocale(LC_ALL, "");
@@ -278,6 +311,7 @@ int main() {
 
   Pomodoro pomodoro(pomodoro_window);
   Todo todo;
+  RestoreTodo(todo.items);
   nodelay(stdscr, TRUE);
   for (;;) {
     int ch = getch();
@@ -317,4 +351,5 @@ int main() {
   endwin();
 
   SaveTodo(day, todo.items);
+  SaveState(todo.items);
 }
