@@ -11,6 +11,8 @@
 
 #include "state.pb.h"
 
+constexpr double kTimeAcceleration = 10;
+
 constexpr double kWorkPhaseSeconds = 25 * 60;
 constexpr double kShortBreakSeconds = 5 * 60;
 constexpr double kLongBreakSeconds = 15 * 60;
@@ -66,13 +68,38 @@ public:
     }
   }
 
+  void Reset() {
+    switch (state) {
+    case PAUSE_DONE:
+      // Nothing to reset.
+      break;
+    case WORK_DONE: {
+      if (elapsed_time > target_time) {
+        // We already increased the work counter.
+        pomodoros_done -= 1;
+      }
+      // Deliberate fallthrough.
+    }
+    case WORKING: {
+      state = PAUSE_DONE;
+      elapsed_time = target_time = kShortBreakSeconds;
+      break;
+    }
+    case PAUSE: {
+      state = WORK_DONE;
+      elapsed_time = target_time = kWorkPhaseSeconds;
+      break;
+    }
+    }
+  }
+
   void Tick() {
     // Keep track of elapsing time.
     if (state == WORKING || state == WORK_DONE || state == PAUSE) {
       // We keep counting time during work done to keep track of "overtime".
       const TimePoint now = Clock::now();
       std::chrono::duration<float> since_tick = now - last_update;
-      elapsed_time += since_tick.count();
+      elapsed_time += since_tick.count() * kTimeAcceleration;
       last_update = now;
     }
 
@@ -321,12 +348,14 @@ int main() {
     int ch = getch();
     if (ch == ERR) {
       // No keypress.
-      std::this_thread::sleep_for(std::chrono::milliseconds(40));
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
     } else if (ch == 'q') {
       // Quit.
       break;
     } else if (ch == 's') {
       pomodoro.Start();
+    } else if (ch == 'r') {
+      pomodoro.Reset();
     } else if (ch == 'j') {
       todo.Down();
     } else if (ch == 'k') {
