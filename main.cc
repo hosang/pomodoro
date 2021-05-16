@@ -11,6 +11,10 @@
 
 #include "state.pb.h"
 
+constexpr double kWorkPhaseSeconds = 25 * 60;
+constexpr double kShortBreakSeconds = 5 * 60;
+constexpr double kLongBreakSeconds = 15 * 60;
+
 constexpr char todo_txt_path[] = "/Users/hosang/todo.txt";
 constexpr char state_path[] = "/Users/hosang/todo.StateProto.bp";
 
@@ -45,17 +49,17 @@ public:
       state = PAUSE;
       if (pomodoros_done >= 4) {
         pomodoros_done = 0;
-        // Time for a long break, YAY! 15 minutes.
-        target_time = 15 * 60;
+        // Time for a long break, YAY!
+        target_time = kLongBreakSeconds;
       } else {
-        target_time = 5 * 60; // 5 minutes.
+        target_time = kShortBreakSeconds;
       }
       elapsed_time = 0.0;
       last_update = Clock::now();
       break;
     case PAUSE_DONE:
       state = WORKING;
-      target_time = 25 * 60; // 25 minutes.
+      target_time = kWorkPhaseSeconds;
       elapsed_time = 0.0;
       last_update = Clock::now();
       break;
