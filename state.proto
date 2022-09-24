@@ -1,3 +1,18 @@
 syntax = "proto2";
 
-message StateProto { repeated string todo = 1; }
+message TodayHistoryProto {
+  optional string day = 1;
+
+  message Done {
+    optional string start = 1;
+    optional string end = 2;
+    optional string todo = 3;
+    optional int32 duration_seconds = 4;
+  }
+  repeated Done done = 2;
+}
+
+message StateProto {
+  repeated string todo = 1;
+  optional TodayHistoryProto history = 2;
+}

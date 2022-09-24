@@ -1,6 +1,7 @@
 #include <chrono>
 #include <cmath>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <locale.h>
 #include <string>
@@ -9,15 +10,18 @@
 
 #include "ncurses.h"
 
+#include "state.h"
 #include "state.pb.h"
 
-constexpr double kTimeAcceleration = 10;
+// constexpr double kTimeAcceleration = 100;
+constexpr double kTimeAcceleration = 1;
 
 constexpr double kWorkPhaseSeconds = 25 * 60;
 constexpr double kShortBreakSeconds = 5 * 60;
 constexpr double kLongBreakSeconds = 15 * 60;
 
 constexpr char todo_txt_path[] = "/Users/hosang/todo.txt";
+constexpr char todo_history_path[] = "/Users/hosang/todo.history.txt";
 constexpr char state_path[] = "/Users/hosang/todo.StateProto.bp";
 
 enum Color {
@@ -25,6 +29,9 @@ enum Color {
   BAR = 2,
   PAUSE_BAR = 3,
   PAUSE_OVER_BAR = 4,
+
+  WORK_BLOCK = 5,
+  PAUSE_BLOCK = 6,
 };
 
 void init_colors() {
@@ -32,11 +39,28 @@ void init_colors() {
   init_pair(Color::DEFAULT, COLOR_WHITE, COLOR_BLACK);
   init_pair(Color::BAR, COLOR_BLACK, COLOR_GREEN);
   init_pair(Color::PAUSE_BAR, COLOR_BLACK, COLOR_BLUE);
-  init_pair(Color::PAUSE_OVER_BAR, COLOR_BLACK, COLOR_RED);
+  init_pair(Color::PAUSE_OVER_BAR, COLOR_BLACK, COLOR_YELLOW);
+
+  init_pair(Color::WORK_BLOCK, COLOR_BLACK, COLOR_GREEN);
+  init_pair(Color::PAUSE_BLOCK, COLOR_WHITE, COLOR_BLACK);
 }
+
+uint64_t unix_timestamp(double offset_seconds) {
+  const std::chrono::seconds offset{std::lround(offset_seconds)};
+  const auto now = std::chrono::system_clock::now();
+  return std::chrono::duration_cast<std::chrono::seconds>(
+             now.time_since_epoch() - offset)
+      .count();
+};
 
 class Pomodoro {
 public:
+  struct Phase {
+    int64_t length_seconds;
+    uint64_t start_timestamp;
+  };
+  std::vector<Phase> phases;
+
   Pomodoro(WINDOW *window) : win(window) {}
 
   // Start the next work or break unit. If work or break is already running, do
@@ -48,6 +72,7 @@ public:
       // Timer is already running. Do nothing.
       return;
     case WORK_DONE:
+      FinishWork();
       state = PAUSE;
       if (pomodoros_done >= 4) {
         pomodoros_done = 0;
@@ -68,18 +93,21 @@ public:
     }
   }
 
+  void FinishWork() {
+    if (state != WORK_DONE) {
+      return;
+    }
+    pomodoros_done += 1;
+    phases.push_back({.start_timestamp = unix_timestamp(elapsed_time),
+                      .length_seconds = std::lround(elapsed_time)});
+  }
+
   void Reset() {
     switch (state) {
     case PAUSE_DONE:
       // Nothing to reset.
       break;
-    case WORK_DONE: {
-      if (elapsed_time > target_time) {
-        // We already increased the work counter.
-        pomodoros_done -= 1;
-      }
-      // Deliberate fallthrough.
-    }
+    case WORK_DONE:
     case WORKING: {
       state = PAUSE_DONE;
       elapsed_time = target_time = kShortBreakSeconds;
@@ -109,7 +137,6 @@ public:
       beep();
       if (state == WORKING) {
         state = WORK_DONE;
-        pomodoros_done += 1;
       } else if (state == PAUSE) {
         state = PAUSE_DONE;
       }
@@ -154,6 +181,7 @@ public:
 
     int rows, cols;
     getmaxyx(win, rows, cols);
+    static_cast<void>(rows);
     const attr_t attr = 0;
     mvwinsnstr(win, 0, 1, buffer, kBufSize);
     mvwprintw(win, 0, cols - 2, "%1d", pomodoros_done);
@@ -187,22 +215,22 @@ public:
   };
 
   int current_item = 0;
-  std::vector<Item> items;
 
-  Todo() { items.push_back({.text = "Make TODO list"}); }
+  Todo(State &state) : state_(state) {}
 
   void Up() { current_item = std::max(current_item - 1, 0); }
 
   void Down() {
-    current_item = std::min<int>(current_item + 1, items.size() - 1);
+    current_item = std::min<int>(current_item + 1, state_.todos().size() - 1);
     current_item = std::max(current_item, 0);
   }
 
-  void Toggle() { items[current_item].done = !items[current_item].done; }
+  void Toggle() { state_.ToggleTodo(current_item); }
 
   void Draw(WINDOW *win) const {
+    const auto &items = state_.todos();
     for (int i = 0; i < items.size(); ++i) {
-      const Item &item = items[i];
+      const auto &item = items[i];
       const char status_char = item.done ? 'x' : ' ';
 
       attr_t attrs = 0;
@@ -223,28 +251,25 @@ public:
   }
 
   void New(WINDOW *win) {
-    items.insert(items.begin(), {.text = ""});
     current_item = 0;
     werase(win);
     Draw(win);
     wrefresh(win);
 
-    constexpr int kBufferLength = 32;
+    constexpr int kBufferLength = 64;
     char buffer[kBufferLength];
     nodelay(win, false);
     echo();
     mvwgetnstr(win, /*y=*/current_item, /*x=*/4, buffer, kBufferLength);
     nodelay(win, true);
     noecho();
-    items[current_item].text = buffer;
+    state_.AddTodoFront(buffer);
   }
 
-  void Delete() {
-    if (items.empty()) {
-      return;
-    }
-    items.erase(items.begin() + current_item);
-  }
+  void Delete() { state_.DeleteTodo(current_item); }
+
+private:
+  State &state_;
 };
 
 std::string GetDay() {
@@ -279,7 +304,7 @@ std::vector<Todo::Item> LoadTodo(std::string &day) {
   return {};
 }
 
-void SaveTodo(const std::string &day, const std::vector<Todo::Item> &items) {
+void SaveTodo(const std::string &day, const std::vector<State::Todo> &items) {
   std::ofstream os(todo_txt_path, std::ios_base::app);
   if (!os.is_open()) {
     std::cout << "Could not write to '" << todo_txt_path << "'.\n";
@@ -288,9 +313,29 @@ void SaveTodo(const std::string &day, const std::vector<Todo::Item> &items) {
 
   os << "\n";
   os << day << "\n";
-  for (const Todo::Item &item : items) {
+  for (const State::Todo &item : items) {
     char done_indicator = item.done ? 'x' : ' ';
     os << " " << done_indicator << " " << item.text << "\n";
+  }
+}
+
+// TODO: Come up with a better name than "phases".
+void SavePhases(const std::string &day,
+                const std::vector<Pomodoro::Phase> &phases) {
+  std::ofstream os(todo_history_path, std::ios_base::app);
+  if (!os.is_open()) {
+    std::cout << "Could not write to '" << todo_history_path << "'.\n";
+    return;
+  }
+
+  using seconds = std::chrono::duration<uint64_t>;
+  using sys_seconds =
+      std::chrono::time_point<std::chrono::system_clock, seconds>;
+  for (const auto &phase : phases) {
+    const auto timestamp = std::chrono::system_clock::to_time_t(
+        sys_seconds(seconds(phase.start_timestamp)));
+    os << day << " " << std::put_time(std::localtime(&timestamp), "%FT%T")
+       << " " << phase.start_timestamp << " " << phase.length_seconds << "\n";
   }
 }
 
@@ -301,31 +346,66 @@ StateProto LoadState() {
   return state;
 }
 
-void SaveState(const std::vector<Todo::Item> &items) {
-  StateProto state = LoadState();
-  state.clear_todo();
-  for (const Todo::Item &item : items) {
-    if (item.done) {
-      continue;
-    }
-    state.add_todo(item.text);
-  }
-
+void SaveState(const StateProto &state_proto) {
   std::ofstream os(state_path, std::ios::binary);
-  state.SerializeToOstream(&os);
+  state_proto.SerializeToOstream(&os);
 }
 
-void RestoreTodo(std::vector<Todo::Item> &items) {
-  items.clear();
-  const StateProto state = LoadState();
-  for (const auto &text : state.todo()) {
-    items.push_back({.text = text});
+class NCursesWindow {
+public:
+  WINDOW *window;
+  struct Args {
+    int nlines;
+    int ncols;
+    int begin_y;
+    int begin_x;
+  };
+
+  explicit NCursesWindow(Args args)
+      : window(newwin(args.nlines, args.ncols, args.begin_y, args.begin_x)) {}
+  ~NCursesWindow() { delwin(window); }
+
+  void Erase() { werase(window); }
+  void Refresh() { wrefresh(window); }
+};
+
+int64_t TimestampDifference(uint64_t a, uint64_t b) {
+  // Avoid overflow.
+  if (a > b) {
+    return a - b;
+  } else {
+    return -static_cast<int64_t>(b - a);
+  }
+}
+
+void DrawToday(WINDOW *win, const std::vector<Pomodoro::Phase> &phases) {
+  for (int i = 0; i < phases.size(); ++i) {
+    const auto &phase = phases[i];
+    const int64_t work_duration_minutes = phase.length_seconds / 60;
+
+    wcolor_set(win, Color::WORK_BLOCK, NULL);
+    wprintw(win, " %d ", work_duration_minutes);
+
+    if (i + 1 < phases.size()) {
+      const auto &next_phase = phases[i + 1];
+      const int64_t break_duration_minutes =
+          TimestampDifference(next_phase.start_timestamp,
+                              phase.start_timestamp + phase.length_seconds) /
+          60;
+      wcolor_set(win, Color::PAUSE_BLOCK, NULL);
+      wprintw(win, " %d ", break_duration_minutes);
+    }
   }
 }
 
 int main() {
   GOOGLE_PROTOBUF_VERIFY_VERSION;
   const std::string day = GetDay();
+  State state(LoadState());
+  if (state.day() != day) {
+    state.ClearHistory();
+    state.SetDay(day);
+  }
 
   setlocale(LC_ALL, "");
   initscr();
@@ -335,14 +415,15 @@ int main() {
 
   init_colors();
 
-  WINDOW *pomodoro_window =
-      newwin(/*nlines=*/1, /*ncols=*/0, /*begin_y=*/0, /*begin_x=*/0);
-  WINDOW *todo_window =
-      newwin(/*nlines=*/0, /*ncols=*/0, /*begin_y=*/2, /*begin_x=*/1);
+  NCursesWindow pomodoro_window(
+      {.nlines = 1, .ncols = 0, .begin_y = 0, .begin_x = 0});
+  NCursesWindow today_window(
+      {.nlines = 1, .ncols = 0, .begin_y = 2, .begin_x = 1});
+  NCursesWindow todo_window(
+      {.nlines = 0, .ncols = 0, .begin_y = 4, .begin_x = 1});
 
-  Pomodoro pomodoro(pomodoro_window);
-  Todo todo;
-  RestoreTodo(todo.items);
+  Pomodoro pomodoro(pomodoro_window.window);
+  Todo todo(state);
   nodelay(stdscr, TRUE);
   for (;;) {
     int ch = getch();
@@ -356,12 +437,12 @@ int main() {
       pomodoro.Start();
     } else if (ch == 'r') {
       pomodoro.Reset();
-    } else if (ch == 'j') {
+    } else if (ch == 'j' || ch == KEY_DOWN) {
       todo.Down();
-    } else if (ch == 'k') {
+    } else if (ch == 'k' || ch == KEY_UP) {
       todo.Up();
     } else if (ch == 'n') {
-      todo.New(todo_window);
+      todo.New(todo_window.window);
     } else if (ch == 'D') {
       todo.Delete();
     } else if (ch == ' ') {
@@ -370,19 +451,22 @@ int main() {
 
     pomodoro.Tick();
 
-    werase(pomodoro_window);
-    werase(todo_window);
+    pomodoro_window.Erase();
+    todo_window.Erase();
+    today_window.Erase();
     pomodoro.Draw();
-    todo.Draw(todo_window);
-    // refresh();
-    wrefresh(pomodoro_window);
-    wrefresh(todo_window);
+    todo.Draw(todo_window.window);
+    DrawToday(today_window.window, pomodoro.phases);
+    pomodoro_window.Refresh();
+    today_window.Refresh();
+    todo_window.Refresh();
   }
 
-  delwin(pomodoro_window);
-  delwin(todo_window);
   endwin();
 
-  SaveTodo(day, todo.items);
-  SaveState(todo.items);
+  pomodoro.FinishWork();
+
+  SaveState(state.ToProto());
+  SaveTodo(day, state.todos());
+  SavePhases(day, pomodoro.phases);
 }
