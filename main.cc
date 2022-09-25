@@ -12,9 +12,7 @@
 
 #include "state.h"
 #include "state.pb.h"
-
-// constexpr double kTimeAcceleration = 100;
-constexpr double kTimeAcceleration = 1;
+#include "time_utils.h"
 
 constexpr double kWorkPhaseSeconds = 25 * 60;
 constexpr double kShortBreakSeconds = 5 * 60;
@@ -45,177 +43,8 @@ void init_colors() {
   init_pair(Color::PAUSE_BLOCK, COLOR_WHITE, COLOR_BLACK);
 }
 
-uint64_t unix_timestamp(double offset_seconds) {
-  const std::chrono::seconds offset{std::lround(offset_seconds)};
-  const auto now = std::chrono::system_clock::now();
-  return std::chrono::duration_cast<std::chrono::seconds>(
-             now.time_since_epoch() - offset)
-      .count();
-};
-
-class Pomodoro {
-public:
-  struct Phase {
-    int64_t length_seconds;
-    uint64_t start_timestamp;
-  };
-  std::vector<Phase> phases;
-
-  Pomodoro(WINDOW *window) : win(window) {}
-
-  // Start the next work or break unit. If work or break is already running, do
-  // nothing.
-  void Start() {
-    switch (state) {
-    case WORKING:
-    case PAUSE:
-      // Timer is already running. Do nothing.
-      return;
-    case WORK_DONE:
-      FinishWork();
-      state = PAUSE;
-      if (pomodoros_done >= 4) {
-        pomodoros_done = 0;
-        // Time for a long break, YAY!
-        target_time = kLongBreakSeconds;
-      } else {
-        target_time = kShortBreakSeconds;
-      }
-      elapsed_time = 0.0;
-      last_update = Clock::now();
-      break;
-    case PAUSE_DONE:
-      state = WORKING;
-      target_time = kWorkPhaseSeconds;
-      elapsed_time = 0.0;
-      last_update = Clock::now();
-      break;
-    }
-  }
-
-  void FinishWork() {
-    if (state != WORK_DONE) {
-      return;
-    }
-    pomodoros_done += 1;
-    phases.push_back({.start_timestamp = unix_timestamp(elapsed_time),
-                      .length_seconds = std::lround(elapsed_time)});
-  }
-
-  void Reset() {
-    switch (state) {
-    case PAUSE_DONE:
-      // Nothing to reset.
-      break;
-    case WORK_DONE:
-    case WORKING: {
-      state = PAUSE_DONE;
-      elapsed_time = target_time = kShortBreakSeconds;
-      break;
-    }
-    case PAUSE: {
-      state = WORK_DONE;
-      elapsed_time = target_time = kWorkPhaseSeconds;
-      break;
-    }
-    }
-  }
-
-  void Tick() {
-    // Keep track of elapsing time.
-    if (state == WORKING || state == WORK_DONE || state == PAUSE) {
-      // We keep counting time during work done to keep track of "overtime".
-      const TimePoint now = Clock::now();
-      std::chrono::duration<float> since_tick = now - last_update;
-      elapsed_time += since_tick.count() * kTimeAcceleration;
-      last_update = now;
-    }
-
-    // In case the timer *just* finished.
-    if ((state == WORKING || state == PAUSE) && elapsed_time >= target_time) {
-      // We're done with the current block.
-      beep();
-      if (state == WORKING) {
-        state = WORK_DONE;
-      } else if (state == PAUSE) {
-        state = PAUSE_DONE;
-      }
-    }
-  }
-
-  void Draw() const {
-    int bar_length = elapsed_time / target_time * COLS;
-    bar_length = std::min(bar_length, COLS);
-    bar_length = std::max(bar_length, 1);
-    if (state == WORK_DONE || state == PAUSE_DONE) {
-      bar_length = COLS;
-    }
-
-    const int remaining = std::lround(target_time - elapsed_time);
-    constexpr int kBufSize = 32;
-    char buffer[kBufSize];
-    short bar_color;
-    switch (state) {
-    case WORKING:
-      snprintf(buffer, kBufSize, "work %2d:%02d", remaining / 60,
-               remaining % 60);
-      bar_color = Color::BAR;
-      break;
-    case WORK_DONE: {
-      const int overtime = std::lround(elapsed_time - target_time);
-      snprintf(buffer, kBufSize, "work DONE (+%d:%02d)", overtime / 60,
-               overtime % 60);
-      bar_color = Color::PAUSE_BAR;
-      break;
-    }
-    case PAUSE:
-      snprintf(buffer, kBufSize, "pause %2d:%02d", remaining / 60,
-               remaining % 60);
-      bar_color = Color::PAUSE_BAR;
-      break;
-    case PAUSE_DONE:
-      snprintf(buffer, kBufSize, "pause OVER");
-      bar_color = Color::PAUSE_OVER_BAR;
-      break;
-    }
-
-    int rows, cols;
-    getmaxyx(win, rows, cols);
-    static_cast<void>(rows);
-    const attr_t attr = 0;
-    mvwinsnstr(win, 0, 1, buffer, kBufSize);
-    mvwprintw(win, 0, cols - 2, "%1d", pomodoros_done);
-    mvwchgat(win, 0, 0, bar_length, attr, bar_color, nullptr);
-  }
-
-private:
-  using Clock = std::chrono::steady_clock;
-  using TimePoint = std::chrono::time_point<Clock>;
-
-  enum State {
-    WORKING,
-    WORK_DONE,
-    PAUSE,
-    PAUSE_DONE,
-  };
-
-  WINDOW *win;
-  State state = PAUSE_DONE;
-  float target_time = 0.0;
-  float elapsed_time = 0.0;
-  TimePoint last_update;
-  int pomodoros_done = 0;
-};
-
 class Todo {
 public:
-  struct Item {
-    bool done;
-    std::string text;
-  };
-
-  int current_item = 0;
-
   Todo(State &state) : state_(state) {}
 
   void Up() { current_item = std::max(current_item - 1, 0); }
@@ -223,6 +52,15 @@ public:
   void Down() {
     current_item = std::min<int>(current_item + 1, state_.todos().size() - 1);
     current_item = std::max(current_item, 0);
+  }
+
+  std::string CurrentTodoText() const {
+    const auto &items = state_.todos();
+    if (current_item < items.size()) {
+      return items[current_item].text;
+    } else {
+      return "";
+    }
   }
 
   void Toggle() { state_.ToggleTodo(current_item); }
@@ -270,6 +108,172 @@ public:
 
 private:
   State &state_;
+  int current_item = 0;
+};
+
+class Pomodoro {
+public:
+  Pomodoro(WINDOW *window, State &state, Todo &todo)
+      : win(window), state_(state), todo_(todo) {}
+
+  // Start the next work or break unit. If work or break is already running, do
+  // nothing.
+  void Start() {
+    switch (work_state) {
+    case WORKING:
+    case PAUSE:
+      // Timer is already running. Do nothing.
+      break;
+    case WORK_DONE:
+      FinishWork();
+      work_state = PAUSE;
+      if (pomodoros_done >= 4) {
+        pomodoros_done = 0;
+        // Time for a long break, YAY!
+        timer_.Start(kLongBreakSeconds);
+      } else {
+        timer_.Start(kShortBreakSeconds);
+      }
+      break;
+    case PAUSE_DONE:
+      FinishPause();
+      work_state = WORKING;
+      timer_.Start(kWorkPhaseSeconds);
+      break;
+    }
+  }
+
+  void Stop() {
+    // "Force" current phase to end, so it's possible to start the next one.
+    switch (work_state) {
+    case WORKING:
+      work_state = WORK_DONE;
+      break;
+    case PAUSE:
+      work_state = PAUSE_DONE;
+      break;
+    case WORK_DONE:
+    case PAUSE_DONE:
+      // Nothing to do.
+      break;
+    }
+  }
+
+  void FinishPause() {
+    if (work_state != PAUSE_DONE || !timer_.active()) {
+      return;
+    }
+    Done done = timer_.Stop();
+    done.set_done_type(Done::BREAK);
+    state_.AddDone(done);
+  }
+
+  void FinishWork() {
+    if (work_state != WORK_DONE) {
+      return;
+    }
+    pomodoros_done += 1;
+    Done done = timer_.Stop();
+    done.set_done_type(Done::WORK);
+    done.set_todo(todo_.CurrentTodoText());
+    state_.AddDone(done);
+  }
+
+  void Reset() {
+    switch (work_state) {
+    case PAUSE_DONE:
+      // Nothing to reset.
+      break;
+    case WORK_DONE:
+    case WORKING: {
+      work_state = PAUSE_DONE;
+      break;
+    }
+    case PAUSE: {
+      work_state = WORK_DONE;
+      break;
+    }
+    }
+  }
+
+  void Tick() {
+    // timer_ automatically keeps track of time, even if the target_duration is
+    // up.
+
+    // In case the timer *just* finished.
+    if ((work_state == WORKING || work_state == PAUSE) && timer_.IsRinging()) {
+      // We're done with the current block.
+      beep();
+      if (work_state == WORKING) {
+        work_state = WORK_DONE;
+      } else if (work_state == PAUSE) {
+        work_state = PAUSE_DONE;
+      }
+    }
+  }
+
+  void Draw() const {
+    int bar_length = timer_.ElapsedFraction() * COLS;
+    bar_length = std::min(bar_length, COLS);
+    bar_length = std::max(bar_length, 1);
+    if (work_state == WORK_DONE || work_state == PAUSE_DONE) {
+      bar_length = COLS;
+    }
+
+    const int remaining = std::lround(timer_.RemainingSeconds());
+    constexpr int kBufSize = 32;
+    char buffer[kBufSize];
+    short bar_color;
+    switch (work_state) {
+    case WORKING:
+      snprintf(buffer, kBufSize, "work %2d:%02d", remaining / 60,
+               remaining % 60);
+      bar_color = Color::BAR;
+      break;
+    case WORK_DONE: {
+      const int overtime = std::lround(timer_.OvertimeSeconds());
+      snprintf(buffer, kBufSize, "work DONE (+%d:%02d)", overtime / 60,
+               overtime % 60);
+      bar_color = Color::PAUSE_BAR;
+      break;
+    }
+    case PAUSE:
+      snprintf(buffer, kBufSize, "pause %2d:%02d", remaining / 60,
+               remaining % 60);
+      bar_color = Color::PAUSE_BAR;
+      break;
+    case PAUSE_DONE:
+      snprintf(buffer, kBufSize, "pause OVER");
+      bar_color = Color::PAUSE_OVER_BAR;
+      break;
+    }
+
+    int rows, cols;
+    getmaxyx(win, rows, cols);
+    static_cast<void>(rows);
+    const attr_t attr = 0;
+    mvwinsnstr(win, 0, 1, buffer, kBufSize);
+    mvwprintw(win, 0, cols - 2, "%1d", pomodoros_done);
+    mvwchgat(win, 0, 0, bar_length, attr, bar_color, nullptr);
+  }
+
+private:
+  using Clock = std::chrono::steady_clock;
+  using TimePoint = std::chrono::time_point<Clock>;
+
+  enum WorkState {
+    WORKING,
+    WORK_DONE,
+    PAUSE,
+    PAUSE_DONE,
+  };
+
+  WINDOW *win;
+  State &state_;
+  Todo &todo_;
+  PomodoroTimer timer_;
+  WorkState work_state = PAUSE_DONE;
+  int pomodoros_done = 0;
 };
 
 std::string GetDay() {
@@ -278,30 +282,6 @@ std::string GetDay() {
   time(&now);
   strftime(buf, sizeof buf, "%F", localtime(&now));
   return std::string(buf);
-}
-
-std::vector<Todo::Item> LoadTodo(std::string &day) {
-  std::ifstream is(todo_txt_path);
-  if (!is.is_open()) {
-    std::cout << "Could not open '" << todo_txt_path << "'.\n";
-    return {};
-  }
-
-  // TODO: Also store todo items from most recent entry, so items that are not
-  // DONE can be copied to today.
-  std::string line;
-  while (std::getline(is, line)) {
-    if (line.length() == 0) {
-      continue;
-    }
-
-    if (isdigit(line[0])) {
-      // Assuming this is a date.
-    }
-    std::cout << line << std::endl;
-  }
-
-  return {};
 }
 
 void SaveTodo(const std::string &day, const std::vector<State::Todo> &items) {
@@ -319,23 +299,20 @@ void SaveTodo(const std::string &day, const std::vector<State::Todo> &items) {
   }
 }
 
-// TODO: Come up with a better name than "phases".
-void SavePhases(const std::string &day,
-                const std::vector<Pomodoro::Phase> &phases) {
+void SaveTodayTxt(const State &state) {
   std::ofstream os(todo_history_path, std::ios_base::app);
   if (!os.is_open()) {
     std::cout << "Could not write to '" << todo_history_path << "'.\n";
     return;
   }
 
-  using seconds = std::chrono::duration<uint64_t>;
-  using sys_seconds =
-      std::chrono::time_point<std::chrono::system_clock, seconds>;
-  for (const auto &phase : phases) {
-    const auto timestamp = std::chrono::system_clock::to_time_t(
-        sys_seconds(seconds(phase.start_timestamp)));
-    os << day << " " << std::put_time(std::localtime(&timestamp), "%FT%T")
-       << " " << phase.start_timestamp << " " << phase.length_seconds << "\n";
+  os << "\n" << state.day() << "\n";
+  for (const Done &done : state.history()) {
+    if (done.done_type() != Done::WORK)
+      continue;
+    const int duration_minutes = std::lround(done.duration_seconds() / 60);
+    os << "  " << done.start_time() << " " << done.end_time() << " "
+       << duration_minutes << "m " << done.todo() << "\n";
   }
 }
 
@@ -369,32 +346,16 @@ public:
   void Refresh() { wrefresh(window); }
 };
 
-int64_t TimestampDifference(uint64_t a, uint64_t b) {
-  // Avoid overflow.
-  if (a > b) {
-    return a - b;
-  } else {
-    return -static_cast<int64_t>(b - a);
-  }
-}
+void DrawToday(WINDOW *win, const State &state) {
+  for (const Done &phase : state.history()) {
+    const int64_t duration_minutes = std::lround(phase.duration_seconds() / 60);
 
-void DrawToday(WINDOW *win, const std::vector<Pomodoro::Phase> &phases) {
-  for (int i = 0; i < phases.size(); ++i) {
-    const auto &phase = phases[i];
-    const int64_t work_duration_minutes = phase.length_seconds / 60;
-
-    wcolor_set(win, Color::WORK_BLOCK, NULL);
-    wprintw(win, " %d ", work_duration_minutes);
-
-    if (i + 1 < phases.size()) {
-      const auto &next_phase = phases[i + 1];
-      const int64_t break_duration_minutes =
-          TimestampDifference(next_phase.start_timestamp,
-                              phase.start_timestamp + phase.length_seconds) /
-          60;
+    if (phase.done_type() == Done::WORK) {
+      wcolor_set(win, Color::WORK_BLOCK, NULL);
+    } else if (phase.done_type() == Done::BREAK) {
       wcolor_set(win, Color::PAUSE_BLOCK, NULL);
-      wprintw(win, " %d ", break_duration_minutes);
     }
+    wprintw(win, " %d ", duration_minutes);
   }
 }
 
@@ -422,8 +383,8 @@ int main() {
   NCursesWindow todo_window(
       {.nlines = 0, .ncols = 0, .begin_y = 4, .begin_x = 1});
 
-  Pomodoro pomodoro(pomodoro_window.window);
   Todo todo(state);
+  Pomodoro pomodoro(pomodoro_window.window, state, todo);
   nodelay(stdscr, TRUE);
   for (;;) {
     int ch = getch();
@@ -435,6 +396,8 @@ int main() {
       break;
     } else if (ch == 's') {
       pomodoro.Start();
+    } else if (ch == 'S') {
+      pomodoro.Stop();
     } else if (ch == 'r') {
       pomodoro.Reset();
     } else if (ch == 'j' || ch == KEY_DOWN) {
@@ -456,7 +419,7 @@ int main() {
     today_window.Erase();
     pomodoro.Draw();
     todo.Draw(todo_window.window);
-    DrawToday(today_window.window, pomodoro.phases);
+    DrawToday(today_window.window, state);
     pomodoro_window.Refresh();
     today_window.Refresh();
     todo_window.Refresh();
@@ -468,5 +431,5 @@ int main() {
 
   SaveState(state.ToProto());
   SaveTodo(day, state.todos());
-  SavePhases(day, pomodoro.phases);
+  SaveTodayTxt(state);
 }

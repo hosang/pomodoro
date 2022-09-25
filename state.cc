@@ -9,6 +9,10 @@ State::State(const StateProto &proto) : day_(proto.history().day()) {
   if (todos_.empty()) {
     AddTodo("Make TODO list");
   }
+
+  for (const Done &done : proto.history().done()) {
+    history_.push_back(done);
+  }
 }
 
 StateProto State::ToProto() const {
@@ -19,6 +23,11 @@ StateProto State::ToProto() const {
     if (!todo.done) {
       proto.add_todo(todo.text);
     }
+  }
+
+  proto.mutable_history()->set_day(day_);
+  for (const Done &done : history_) {
+    *proto.mutable_history()->add_done() = done;
   }
 
   return proto;

@@ -10,13 +10,12 @@ public:
     std::string text;
   };
 
-  struct Done {};
-
   State(const StateProto &proto);
   StateProto ToProto() const;
 
   const std::string &day() const { return day_; }
   const std::vector<Todo> &todos() const { return todos_; }
+  const std::vector<Done> &history() const { return history_; }
 
   // Manipulate todo list.
   void AddTodo(const std::string &text) {
@@ -40,12 +39,13 @@ public:
 
   // Manipulate history.
   void SetDay(const std::string &day) { day_ = day; }
-  void ClearHistory() {}
+  void ClearHistory() { history_.clear(); }
+  void AddDone(const Done &done) { history_.push_back(done); }
 
 private:
   std::string day_;
   std::vector<Todo> todos_;
-  std::vector<Done> dones_;
+  std::vector<Done> history_;
 };
 
 #endif // POMODORO_STATE_H_

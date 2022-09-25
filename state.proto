@@ -1,14 +1,20 @@
 syntax = "proto2";
 
+message Done {
+  enum DoneType {
+    DONE_TYPE_UNSPECIFIED = 0;
+    WORK = 1;
+    BREAK = 2;
+  }
+  optional DoneType done_type = 1;
+  optional string start_time = 2;
+  optional string end_time = 3;
+  optional string todo = 4;
+  optional double duration_seconds = 5;
+}
+
 message TodayHistoryProto {
   optional string day = 1;
-
-  message Done {
-    optional string start = 1;
-    optional string end = 2;
-    optional string todo = 3;
-    optional int32 duration_seconds = 4;
-  }
   repeated Done done = 2;
 }
 

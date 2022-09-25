@@ -4,6 +4,7 @@ cc_binary(
     deps = [
         ":state",
         ":state_cc_proto",
+        ":time_utils",
         "@ncurses//:main",
     ],
 )
@@ -22,6 +23,14 @@ cc_library(
     name = "state",
     srcs = ["state.cc"],
     hdrs = ["state.h"],
+    deps = [
+        ":state_cc_proto",
+    ],
+)
+
+cc_library(
+    name = "time_utils",
+    hdrs = ["time_utils.h"],
     deps = [
         ":state_cc_proto",
     ],
